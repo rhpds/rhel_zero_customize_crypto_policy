@@ -1,51 +1,121 @@
-= {lab_name}
+== Modify the FUTURE crypto policy
 
-The `lab_name` var, known as an asciidoc attribute, above was set in `./content/antora.yml` and can be used to set the lab_name or title of your content.
-You are both free to change its value and if you prefer to use a different var name, you can change the value of `lab_name`, for example to `title` in `./content/antora.yml` and then reference it in your content as `\{title}`.
-me
+The Chief Security Officer sends out the following e-mail -
 
-== Variables
+Application and Infrastructure Administrators,
 
-Other vars can also be set there, such as `ssh_user` and `ssh_password`, and referenced inline in the lab content by using the `\{foo}` syntax.
+After my last e-mail recommending 3072 bit public keys, I have received
+few concerns that some applications would need additional time for
+migration.
 
-This is another var, or asciidoc attribute, from `./content/antora.yml` {my_var}
+To continue supporting these applications running on our platform, and
+to provide more time for these applications to upgrade, my
+recommendation is to disallow TLS (1.0, and 1.1), and not allow SHA-1
+hash usage.
 
-== Writing your lab
+*NOTE* We should still allow 2048 bit ciphers usage for a certain period
+of time until all applications can be upgraded to use 3072 bit keys.
 
-Whatever type of content you are writing we'll refer to your *content* as "your lab" in this document.
+-CSO
 
-=== Lab structure
+....
 
+In order to comply with the requirements set forth by the CSO above, you will update the system to modify the **FUTURE** policy to support shorter keys of 2048 bit length. By default, the minimum key length in the **FUTURE** policy is set to 3072-bit.
 
-Wether you are writing a lab
+You will now check the currently active crypto policy in effect on the system -
 
-* First, we will build a monolithic application already compiled as RPM packages and put it into a container. This will allow us to deploy the application, copy it between machines, and update it separately from the operating system. This process affords us a portable and easily maintained component instead of tightly coupling the application with your operating system maintenance.
+```bash
+update-crypto-policies --show
+....
 
-* In closing we will build a second container on a different operating system version that makes an application not packaged into RPMs. This will be similar to a web application deployment, positioning the correct files at the right locations. To do this, we will pull a project from GitHub and position the component files within our container image. The purpose of this is to achieve a portable application container that can deploy on several different versions of Red Hat Enterprise Linux. This also provides the benefit of decoupling your application maintenance, which would all happen by building new containers versus operating system maintenance. The container is no longer reliant on the operating system installed on the machine where the application is deployed.
+root@rhel:~# update-crypto-policies –show FUTURE
 
+....
 
-. Now let's examine this cluster a bit more by describing the cluster (the `$GUID` environment variable is already set for you so you can immediately describe your individual cluster):
-+
-[source,sh,role=execute]
+Restart Apache.
+
+```bash
+systemctl restart httpd.service
+....
+
+root@rhel:~# systemctl restart httpd.service Job for httpd.service
+failed because the control process exited with error code. See
+"`systemctl status httpd.service`" and "`journalctl -xeu httpd.service`"
+for details.
+
+....
+
+The Apache service has failed to start. You will now check the status of the Apache service -
+
+```bash
+systemctl status httpd.service --no-pager
+....
+
+You can see a more specific error message in the SSL error log for
+Apache.
+
+[source,bash]
 ----
-podman ps
-----
-+
-.Sample Output
-[source,texinfo,subs="attributes"]
-----
-CONTAINER ID  IMAGE                        COMMAND           CREATED      STATUS      PORTS                 NAMES
-2dcfee9e50c4  docker.io/library/httpd:2.4  httpd-foreground  3 hours ago  Up 3 hours  0.0.0.0:8080->80/tcp  showroom-httpd
+tail -2 /var/log/httpd/ssl_error_log
 ----
 
+[Tue Jul 16 15:13:25.580860 2019 ] [ssl:emerg] [pid 8869:tid
+140233336588544] AH02562: Failed to configure certificate
+fe80::42:acff:fe11:b:443:0 (with chain), check
+/etc/pki/tls/certs/localhost.crt [Tue Jul 16 15:13:25.580860 2019 ]
+[ssl:emerg] [pid 8869:tid 140233336588544] SSL Library Error: error:
+140AB18F: SSL routines: SSL_CTX_use_certificate:ee key too small
 
+....
 
+The error message indicates that the key length was too small which was expected because
+the **FUTURE** policy requires a minimum of 3072-bit keys.
 
+Now, you will create a policy modifier module called **2048KEYS.pmod** that can be used with the FUTURE crypto policy. Policy modifiers are text files that include policy instructions to the update-crypto-policies tool.
 
+The naming of these files must follow the following convention : **_MODULE_.pmod**, where **_MODULE_** is the name of the modifier in uppercase without spaces, and .pmod is the file extension in lowercase.
 
+Next, you will create a policy modifier called **2048KEYS.pmod** that will set the minimum key size to 2048 bits.
 
+```bash
+touch /etc/crypto-policies/policies/modules/2048KEYS.pmod
+....
 
-=== Lab Access
+In the policy modifier file, you will specify the minimum key size of
+RSA and DH keys -
 
-The terminal window to your right is *already* logged into the lab environment as the `{ssh_user}` user via `ssh`. 
-All steps of this lab are to be completed as the `{ssh_user}` user.
+[source,bash]
+----
+echo "min_dh_size = 2048" > /etc/crypto-policies/policies/modules/2048KEYS.pmod
+----
+
+[source,bash]
+----
+echo "min_rsa_size = 2048" >> /etc/crypto-policies/policies/modules/2048KEYS.pmod
+----
+
+You will now configure the system to use a modified *FUTURE* policy with
+our newly created policy modifier -
+
+[source,bash]
+----
+update-crypto-policies --set FUTURE:2048KEYS
+----
+
+If you want to apply multiple policy modifiers, you can chain together
+several policy modifiers separated using '`:`'. The policy modifiers are
+evaluated left to right to modify the specified named policy.
+
+Setting system policy to FUTURE:2048KEYS Note: System-wide crypto
+policies are applied on application start-up. It is recommended to
+restart the system for the change of policies to fully take place.
+
+....
+
+You can now verify that the new policy has been applied to the system.
+
+```bash
+update-crypto-policies --show
+....
+
+FUTURE:2048KEYS ```
